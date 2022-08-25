@@ -1,4 +1,4 @@
-# extended_lidar_camera_calib
+# LiDAR-Camera-calib  
 
 This work is an extended version of [livox_camera_calib](https://github.com/hku-mars/livox_camera_calib.git), which is suitable for spinning LiDAR。
 
