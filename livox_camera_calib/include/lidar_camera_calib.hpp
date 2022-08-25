@@ -193,6 +193,7 @@ Calibration::Calibration(const std::string &camera_file,
   std::unordered_map<VOXEL_LOC, Voxel *> voxel_map;
 
   initVoxel(raw_lidar_cloud_, voxel_size_, voxel_map);
+
   LiDAREdgeExtraction(voxel_map, ransac_dis_threshold_, plane_size_threshold_,
                       plane_line_cloud_);
 
@@ -323,7 +324,8 @@ void Calibration::colorCloud(
   color_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(
       new pcl::PointCloud<pcl::PointXYZRGB>);
   for (size_t i = 0; i < pts_2d.size(); i++) {
-    if (pts_2d[i].x > 1 && pts_2d[i].x < image_cols - 1 && pts_2d[i].y > 1 &&
+    // Fix issue with https://github.com/hku-mars/livox_camera_calib/issues/27
+    if (pts_2d[i].x > 0 && pts_2d[i].x < image_cols - 1 && pts_2d[i].y > 0 &&
         pts_2d[i].y < image_rows - 1) {
       cv::Scalar color = rgb_img.at<cv::Vec3b>(pts_2d[i]);
       if (color[0] == 0 && color[1] == 0 && color[2] == 0) {
@@ -701,34 +703,46 @@ void Calibration::LiDAREdgeExtraction(
     const float ransac_dis_thre, const int plane_size_threshold,
     pcl::PointCloud<pcl::PointXYZI>::Ptr &lidar_line_cloud_3d) {
   ROS_INFO_STREAM("Extracting Lidar Edge");
-  ros::Rate loop(5000);
+  // ros::Rate loop(1);
+  
   lidar_line_cloud_3d =
       pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
+ 
   for (auto iter = voxel_map.begin(); iter != voxel_map.end(); iter++) {
+    
     if (iter->second->cloud->size() > 50) {
+      ROS_INFO_STREAM("Voxel Size: " << iter->second->cloud->size());
+
       std::vector<Plane> plane_list;
-      // 创建一个体素滤波器
+      // Create a voxel filter
       pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_filter(
           new pcl::PointCloud<pcl::PointXYZI>);
       pcl::copyPointCloud(*iter->second->cloud, *cloud_filter);
-      //创建一个模型参数对象，用于记录结果
+      // Create a model parameter object to record the results
       pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-      // inliers表示误差能容忍的点，记录点云序号
+      // Inliers represent points where errors can be tolerate，record point cloud sequence numbers
       pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+      
       //创建一个分割器
       pcl::SACSegmentation<pcl::PointXYZI> seg;
-      // Optional,设置结果平面展示的点是分割掉的点还是分割剩下的点
+      // Optional, set the point of view of the result plane to be the point of segmentation or the point of segmentation remaining.
       seg.setOptimizeCoefficients(true);
-      // Mandatory-设置目标几何形状
+      // Mandatory - Set target geometry
       seg.setModelType(pcl::SACMODEL_PLANE);
-      //分割方法：随机采样法
+      // segmentation method: random sampling method
       seg.setMethodType(pcl::SAC_RANSAC);
+
+      ROS_INFO_STREAM("Segmentation finished");
+      
       //设置误差容忍范围，也就是阈值
       if (iter->second->voxel_origin[0] < 10) {
         seg.setDistanceThreshold(ransac_dis_thre);
-      } else {
+      } 
+      else {
         seg.setDistanceThreshold(ransac_dis_thre);
       }
+
+      ROS_INFO_STREAM("color_planner_cloud start!");
       pcl::PointCloud<pcl::PointXYZRGB> color_planner_cloud;
       int plane_index = 0;
       while (cloud_filter->points.size() > 10) {
@@ -786,18 +800,27 @@ void Calibration::LiDAREdgeExtraction(
         extract.filter(cloud_f);
         *cloud_filter = cloud_f;
       }
+
+      ROS_INFO_STREAM("color_planner_cloud end!");
+
+      // 이것때문에 시간이 계속 걸림... 일단 주석처리 한번 해봄 taeyoung
       if (plane_list.size() >= 2) {
         sensor_msgs::PointCloud2 planner_cloud2;
         pcl::toROSMsg(color_planner_cloud, planner_cloud2);
         planner_cloud2.header.frame_id = "livox";
         planner_cloud_pub_.publish(planner_cloud2);
-        loop.sleep();
+        // loop.sleep();
       }
+
+      ROS_INFO_STREAM("calcLine start!");
 
       std::vector<pcl::PointCloud<pcl::PointXYZI>> line_cloud_list;
       calcLine(plane_list, voxel_size_, iter->second->voxel_origin,
                line_cloud_list);
+      
+               
       // ouster 5,normal 3
+      ROS_INFO_STREAM("Line Size: " << line_cloud_list.size());
       if (line_cloud_list.size() > 0 && line_cloud_list.size() <= 8) {
 
         for (size_t cloud_index = 0; cloud_index < line_cloud_list.size();
@@ -809,12 +832,13 @@ void Calibration::LiDAREdgeExtraction(
             pcl::toROSMsg(line_cloud_list[cloud_index], pub_cloud);
             pub_cloud.header.frame_id = "livox";
             line_cloud_pub_.publish(pub_cloud);
-            loop.sleep();
+            // loop.sleep();
             plane_line_number_.push_back(line_number_);
           }
           line_number_++;
         }
       }
+
     }
   }
 }
@@ -1386,6 +1410,8 @@ void Calibration::loadImgAndPointcloud(
     //   break;
     // }
   }
+
+  // 여기서 이미지를 한장밖에 안 담음 taeyoung
   std::vector<string> img_topic;
   img_topic.push_back(image_topic_name_);
   rosbag::View img_view(bag, rosbag::TopicQuery(img_topic));
